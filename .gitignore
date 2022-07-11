@@ -1,0 +1,5 @@
+*.DS_Store
+.vscode
+exec.bin
+debug.bin
+go.mod.tmp
