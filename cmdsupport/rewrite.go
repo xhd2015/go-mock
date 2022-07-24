@@ -33,11 +33,17 @@ type GenRewriteOptions struct {
 	AllowMissing bool
 
 	Force bool // force indicates no cache
+
+	LoadArgs []string // passed to packages.Load
+
+	ForTest bool
 }
 
 type GenRewriteResult struct {
 	// original dir to new dir, original dir may contain @version, new dir replace @ with /
-	MappedMod map[string]string
+	// to be used as -trim when building
+	MappedMod    map[string]string
+	UseNewGOROOT string
 }
 
 var ignores = []string{"(.*/)?\\.git\\b", "(.*/)?node_modules\\b"}
@@ -100,6 +106,8 @@ func GenRewrite(args []string, rootDir string, opts *GenRewriteOptions) (res *Ge
 	loadPkgTime := time.Now()
 	fset, starterPkgs, err := inspect.LoadPackages(args, &inspect.LoadOptions{
 		ProjectDir: projectDir,
+		ForTest:    opts.ForTest,
+		BuildFlags: opts.LoadArgs,
 	})
 	loadPkgEnd := time.Now()
 	if verboseCost {
@@ -200,21 +208,29 @@ func GenRewrite(args []string, rootDir string, opts *GenRewriteOptions) (res *Ge
 		log.Printf("COST rewrite:%v", rewriteEnd.Sub(rewriteTime))
 	}
 
-	vendorMod := false
+	extraPkgInInVendor := false
+	hasStd := false
 	for _, p := range extraPkgs {
 		dir := inspect.GetModuleDir(p.Module)
 		if dir == "" {
 			// has module, but no dir
 			// check if any file is inside vendor
 			if inspect.IsVendor(modDir, p.GoFiles[0]) /*empty GoFiles are filtered*/ {
-				vendorMod = true
+				extraPkgInInVendor = true
 				break
 			}
 		}
+		hasStd = hasStd || inspect.IsStdModule(p.Module)
+	}
+
+	if hasStd {
+		res.UseNewGOROOT = inspect.GetGOROOT()
 	}
 
 	if verbose {
-		log.Printf("vendor mode:%v", vendorMod)
+		if len(extraPkgs) > 0 {
+			log.Printf("extra packages in vendor:%v", extraPkgInInVendor)
+		}
 	}
 
 	// copy files
@@ -224,7 +240,7 @@ func GenRewrite(args []string, rootDir string, opts *GenRewriteOptions) (res *Ge
 			log.Printf("copying packages files into rewrite dir: total packages=%d", len(allPkgs))
 		}
 		copyTime := time.Now()
-		destUpdatedBySource = copyPackageFiles(starterPkgs, extraPkgs, rootDir, vendorMod, force, verboseCopy, verbose)
+		destUpdatedBySource = copyPackageFiles(starterPkgs, extraPkgs, rootDir, extraPkgInInVendor, hasStd, force, verboseCopy, verbose)
 		copyEnd := time.Now()
 		if verboseCost {
 			log.Printf("COST copy:%v", copyEnd.Sub(copyTime))
@@ -247,7 +263,7 @@ func GenRewrite(args []string, rootDir string, opts *GenRewriteOptions) (res *Ge
 			log.Printf("COST go mod:%v", goModEnd.Sub(goModTime))
 		}
 	}
-	if !vendorMod {
+	if !extraPkgInInVendor {
 		doMod()
 	}
 
@@ -441,9 +457,19 @@ func GenRewrite(args []string, rootDir string, opts *GenRewriteOptions) (res *Ge
 }
 
 func extractSingleMod(starterPkgs []*packages.Package) (modPath string, modDir string) {
+	// debug
+	// for _, p := range starterPkgs {
+	// 	fmt.Printf("starter pkg:%v\n", p.PkgPath)
+	// 	if p.Module != nil {
+	// 		fmt.Printf("starter model:%v %v\n", p.PkgPath, p.Module.Path)
+	// 	}
+	// }
 	for _, p := range starterPkgs {
 		mod := p.Module
 		if p.Module == nil {
+			if inspect.IsGoTestPkg(p) {
+				continue
+			}
 			panic(fmt.Errorf("package %s has no module", p.PkgPath))
 		}
 		if mod.Replace != nil {
@@ -465,20 +491,29 @@ func extractSingleMod(starterPkgs []*packages.Package) (modPath string, modDir s
 }
 
 // copyPackageFiles copy starter packages(with all packages under the same module) and extra packages into rootDir, to bundle them together.
-func copyPackageFiles(starterPkgs []*packages.Package, extraPkgs []*packages.Package, rootDir string, vendorMod bool, force bool, verboseDetail bool, verboseOverall bool) (destUpdated map[string]bool) {
+func copyPackageFiles(starterPkgs []*packages.Package, extraPkgs []*packages.Package, rootDir string, extraPkgInVendor bool, hasStd bool, force bool, verboseDetail bool, verboseOverall bool) (destUpdated map[string]bool) {
 	var dirList []string
 	fileIgnores := append([]string(nil), ignores...)
+
+	// in test mode, go loads 3 types package under the same dir:
+	// 1.normal package
+	// 2.bridge package, which contains module
+	// 3.test package, which does not contain module
 
 	// copy go files
 	moduleDirs := make(map[string]bool)
 	addMod := func(pkgs []*packages.Package) {
 		for _, p := range pkgs {
+			// std packages are processed as a whole
+			if inspect.IsGoTestPkg(p) || inspect.IsStdModule(p.Module) {
+				continue
+			}
 			moduleDirs[inspect.GetModuleDir(p.Module)] = true
 		}
 	}
 
 	addMod(starterPkgs)
-	if !vendorMod {
+	if !extraPkgInVendor {
 		addMod(extraPkgs)
 		// NOTE: not ignoring vendor
 		// ignores = append(ignores, "vendor")
@@ -486,6 +521,10 @@ func copyPackageFiles(starterPkgs []*packages.Package, extraPkgs []*packages.Pac
 	dirList = make([]string, 0, len(moduleDirs))
 	for modDir := range moduleDirs {
 		dirList = append(dirList, modDir)
+	}
+	if hasStd {
+		// TODO: what if GOROOT is /usr/local/bin?
+		dirList = append(dirList, inspect.GetGOROOT())
 	}
 	// copy other pkgs (deprecated, this only copies package files, but we need to module if any package is modfied.may be used in the future when overlay is supported)
 	// for _, p := range extraPkgs {
@@ -542,6 +581,10 @@ func makeGomodReplaceAboslute(modPkgs []*packages.Package, extraPkgs []*packages
 		if p.Module == nil {
 			panic(fmt.Errorf("cannot replace non-module package:%v", p.PkgPath))
 		}
+		if inspect.IsStdModule(p.Module) {
+			// std modules are replaced via golabl env: GOROOT=xxx
+			continue
+		}
 		mod := p.Module
 		if mod.Replace != nil {
 			mod = mod.Replace
@@ -557,7 +600,7 @@ func makeGomodReplaceAboslute(modPkgs []*packages.Package, extraPkgs []*packages
 		mappedMod[mod.Dir] = cleanDir
 	}
 
-	// get modules
+	// get modules(for mods, actually only 1 module, i.e. the current module will be processed)
 	mods := make([]*packages.Module, 0, 1)
 	modMap := make(map[string]bool, 1)
 	for _, p := range modPkgs {

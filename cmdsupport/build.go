@@ -22,9 +22,12 @@ type BuildOptions struct {
 	ProjectRoot string // default CWD
 	Debug       bool
 	Output      string
+	ForTest     bool
+	GoFlags     string
 	// extra trim path map to be applied
 	// cleanedModOrigAbsDir - modOrigAbsDir
 	mappedMod map[string]string
+	newGoROOT string
 }
 
 type BuildResult struct {
@@ -45,17 +48,20 @@ func BuildRewrite(args []string, genOpts *GenRewriteOptions, opts *BuildOptions)
 
 	res := GenRewrite(args, GetRewriteRoot(), genOpts)
 	opts.mappedMod = res.MappedMod
+	opts.newGoROOT = res.UseNewGOROOT
 	return Build(args, opts)
 }
 
 func Build(args []string, opts *BuildOptions) *BuildResult {
-	verbose := opts != nil && opts.Verbose
-	debug := false
-	var mappedMod map[string]string
-	if opts != nil {
-		debug = opts.Debug
-		mappedMod = opts.mappedMod
+	if opts == nil {
+		opts = &BuildOptions{}
 	}
+	verbose := opts.Verbose
+	debug := opts.Debug
+	mappedMod := opts.mappedMod
+	newGoROOT := opts.newGoROOT
+	forTest := opts.ForTest
+	goFlags := opts.GoFlags
 	// project root
 	projectRoot := ""
 	if opts != nil {
@@ -77,10 +83,14 @@ func Build(args []string, opts *BuildOptions) *BuildResult {
 			}
 		}
 	} else {
-		output = "exec.bin"
+		output = "exec"
 		if debug {
-			output = "debug.bin"
+			output = "debug"
 		}
+		if forTest {
+			output = output + "-test"
+		}
+		output = output + ".bin"
 		if !path.IsAbs(output) {
 			output = path.Join(projectRoot, output)
 		}
@@ -135,8 +145,20 @@ func Build(args []string, opts *BuildOptions) *BuildResult {
 		// fmt.Sprintf("REWRITE_ROOT=%s", quote(root)),
 		// fmt.Sprintf("PROJECT_ROOT=%s", quote(projectRoot)),
 		fmt.Sprintf("cd %s", Quote(newWorkRoot)),
-		fmt.Sprintf(`go build %s %s %s`, outputFlags, Quote(gcflags), joinArgs(args)),
 	}
+	if newGoROOT != "" {
+		cmdList = append(cmdList, fmt.Sprintf("export GOROOT=%s", Quote(path.Join(root, newGoROOT))))
+	}
+	buildCmd := "build"
+	if forTest {
+		buildCmd = "test -c"
+	}
+	goFlagsSpace := ""
+	if goFlags != "" {
+		goFlagsSpace = " " + goFlags
+	}
+	cmdList = append(cmdList, fmt.Sprintf(`go %s %s %s%s %s`, buildCmd, outputFlags, Quote(gcflags), goFlagsSpace, joinArgs(args)))
+
 	cmdExpr := bashCommandExpr(cmdList)
 	if verbose {
 		log.Printf("%s", cmdExpr)

@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/xhd2015/go-mock/code/helper"
+	"github.com/xhd2015/go-mock/code/edit"
 )
 
 // ImportList represents a list of imports
@@ -106,7 +106,7 @@ func formatImport(pkgPath string, alias string) string {
 	return fmt.Sprintf("%q", pkgPath)
 }
 
-func ensureImports(fset *token.FileSet, f *ast.File, session *helper.Session, alias string, path string) (exAlias string, exists bool) {
+func ensureImports(fset *token.FileSet, f *ast.File, buf *edit.Buffer, alias string, path string) (exAlias string, exists bool) {
 	exAlias, exists = getFileImport(f, path)
 	if exists {
 		return
@@ -117,7 +117,7 @@ func ensureImports(fset *token.FileSet, f *ast.File, session *helper.Session, al
 		space = " "
 	}
 	inserts := fmt.Sprintf(";import %s%s%q", alias, space, path)
-	session.Add(off, inserts)
+	buf.Insert(off, inserts)
 
 	return "", false
 }

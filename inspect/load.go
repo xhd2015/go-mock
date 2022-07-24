@@ -3,26 +3,34 @@ package inspect
 import (
 	"fmt"
 	"go/token"
+	"os"
+	"os/exec"
 	"path"
+	"regexp"
 	"strings"
+	"sync"
 
 	"golang.org/x/tools/go/packages"
 )
 
 type LoadOptions struct {
 	ProjectDir string
+	ForTest    bool
+	BuildFlags []string
 }
 
 func LoadPackages(args []string, opts *LoadOptions) (*token.FileSet, []*packages.Package, error) {
-	fset := token.NewFileSet()
-	dir := ""
-	if opts != nil {
-		dir = opts.ProjectDir
+	if opts == nil {
+		opts = &LoadOptions{}
 	}
+	fset := token.NewFileSet()
+	dir := opts.ProjectDir
 	cfg := &packages.Config{
-		Dir:  dir,
-		Mode: packages.NeedFiles | packages.NeedSyntax | packages.NeedDeps | packages.NeedImports | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedModule,
-		Fset: fset,
+		Dir:        dir,
+		Mode:       packages.NeedFiles | packages.NeedSyntax | packages.NeedDeps | packages.NeedImports | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedModule,
+		Fset:       fset,
+		Tests:      opts.ForTest,
+		BuildFlags: opts.BuildFlags,
 		// BuildFlags: []string{"-a"}, // TODO: confirm what the extra non-gofile from
 	}
 	pkgs, err := packages.Load(cfg, args...)
@@ -42,6 +50,63 @@ func MakePackageMap(pkgs []*packages.Package) map[string]*packages.Package {
 		m[normalizePkgPath(pkg)] = pkg
 	}
 	return m
+}
+
+var stdModule *packages.Module
+var stdModuleOnce sync.Once
+var goroot string
+var gorootInitOnce sync.Once
+
+const versionStd = "pseduo-version: go-std"
+
+func GetStdModule() *packages.Module {
+	stdModuleOnce.Do(func() {
+		stdModule = &packages.Module{
+			Path:    "", // will this have problem?
+			Dir:     path.Join(GetGOROOT(), "src"),
+			Version: versionStd,
+		}
+	})
+	return stdModule
+}
+
+func GetGOROOT() string {
+	gorootInitOnce.Do(func() {
+		if os.Getenv("GOROOT") != "" {
+			goroot = os.Getenv("GOROOT")
+		} else {
+			gorootBytes, err := exec.Command("go", "env", "GOROOT").Output()
+			if err != nil {
+				panic(fmt.Errorf("cannot get GOROOT, please consider add 'export GOROOT=$(go env GOROOT)' and retry"))
+			}
+			goroot = string(gorootBytes)
+		}
+		if goroot == "" {
+			panic(fmt.Errorf("empty GOROOT, please consider add 'export GOROOT=$(go env GOROOT)' and retry"))
+		}
+	})
+	return goroot
+}
+
+var lowCase = regexp.MustCompile("^[a-z0-9]+$")
+
+func GetPkgModule(p *packages.Package) *packages.Module {
+	if p.Module != nil {
+		return p.Module
+	}
+	// check if it is std module(i.e. src inside $GOROOT)
+	pkgPath := p.PkgPath
+	idx := strings.Index(pkgPath, "/")
+	//  excluding: github.com, xxx.com, golang.x.org...
+	isStd := idx < 0 || lowCase.MatchString(pkgPath[:idx])
+	if isStd {
+		return GetStdModule()
+	}
+	return nil
+}
+
+func IsStdModule(m *packages.Module) bool {
+	return m.Path == "" && m.Version == versionStd
 }
 
 func GetModuleDir(m *packages.Module) string {
@@ -103,6 +168,7 @@ func normalizePackage(pkg *packages.Package) {
 	// normalize pkg path
 	pkg.PkgPath = normalizePkgPath(pkg)
 	pkg.Name = normalizePkgName(pkg)
+	pkg.Module = GetPkgModule(pkg)
 }
 
 func normalizePkgName(pkg *packages.Package) string {

@@ -11,8 +11,8 @@ import (
 
 	"golang.org/x/tools/go/packages"
 
+	"github.com/xhd2015/go-mock/code/edit"
 	"github.com/xhd2015/go-mock/code/gen"
-	"github.com/xhd2015/go-mock/code/helper"
 )
 
 // this file provides source file rewrite and mock stub generation.
@@ -101,6 +101,10 @@ func rewritePackage(p *packages.Package, fset *token.FileSet, opts *RewriteOptio
 		if !strings.HasSuffix(fname, ".go") {
 			continue
 		}
+		// skip test file: x_test.go
+		if strings.HasSuffix(fname, "_test.go") {
+			continue
+		}
 
 		content, details, noChange, err := rewriteFile(p, pkgPath, fset, f, fname, opts)
 		if noChange {
@@ -168,7 +172,7 @@ func rewriteFile(pkg *packages.Package, pkgPath string, fset *token.FileSet, f *
 		return
 	}
 	funcDetails := make([]*rewriteFuncDetail, 0, 4)
-	session := helper.NewSession(content)
+	buf := edit.NewBuffer(content)
 	mockImported := false
 
 	starterTypesMapping := make(map[types.Type]bool)
@@ -226,25 +230,19 @@ func rewriteFile(pkg *packages.Package, pkgPath string, fset *token.FileSet, f *
 			rc.Init()
 
 			if !mockImported {
-				importAlias, exists := ensureImports(fset, f, session, rc.SupportPkgRef, MOCK_PKG)
-				if exists {
-					if importAlias == "" {
-						rc.SupportPkgRef = "mock" // we know our pkg name is mock
-					} else {
-						rc.SupportPkgRef = importAlias
-					}
-				}
+				ensureImports(fset, f, buf, "_mock", MOCK_PKG)
 				mockImported = true
 			}
 
 			// rewrite names
-			rc.AllFields.RenameFields(fset, session)
+			rc.AllFields.RenameFields(fset, buf)
 
 			var originalResults string
 			if n.Type.Results != nil && len(n.Type.Results.List) > 0 {
 				if n.Type.Results.Opening == token.NoPos {
-					session.Add(OffsetOf(fset, n.Type.Results.Pos())-1, "(")
-					session.Add(OffsetOf(fset, n.Type.Results.End()), ")")
+					// add ()
+					buf.Insert(OffsetOf(fset, n.Type.Results.Pos())-1, "(")
+					buf.Insert(OffsetOf(fset, n.Type.Results.End()), ")")
 				}
 				originalResults = string(getContent(fset, content, n.Type.Results.Pos(), n.Type.Results.End()))
 			}
@@ -290,7 +288,7 @@ func rewriteFile(pkg *packages.Package, pkgPath string, fset *token.FileSet, f *
 			// generate patch content and insert
 			newCode := rc.Gen(false /*pretty*/)
 			patchContent := fmt.Sprintf(`%s}; func %s%s%s{`, newCode, rc.NewFuncName, StripNewline(args), StripNewline(originalResults))
-			session.Add(OffsetOf(fset, n.Body.Lbrace)+1, patchContent)
+			buf.Insert(OffsetOf(fset, n.Body.Lbrace)+1, patchContent)
 
 			// make rewriteDetails
 			funcDetails = append(funcDetails, &rewriteFuncDetail{
@@ -370,7 +368,7 @@ func rewriteFile(pkg *packages.Package, pkgPath string, fset *token.FileSet, f *
 
 	// collect need exported names
 	if false /*make unexported*/ {
-		exportUnexported(f, fset, needExportNames, session)
+		exportUnexported(f, fset, needExportNames, buf)
 	}
 
 	detail = &RewriteFileDetail{
@@ -381,7 +379,7 @@ func rewriteFile(pkg *packages.Package, pkgPath string, fset *token.FileSet, f *
 		ImportPkgByTypes: importPkgByTypes,
 		GetContentByPos:  getContentByPos,
 	}
-	rewriteContent = session.String()
+	rewriteContent = buf.String()
 	return
 }
 func IsInternalPkg(pkgPath string) bool {
@@ -393,6 +391,13 @@ func IsTestPkgOfModule(module string, pkgPath string) bool {
 	}
 	x := strings.TrimPrefix(pkgPath[len(module):], "/")
 	return strings.HasPrefix(x, "test") && (len(x) == len("test") || x[len("test")] == '/')
+}
+
+// Module is nil, and ends with .test or _test
+func IsGoTestPkg(pkg *packages.Package) bool {
+	// may even have pkg.Name == "main", or pkg.Name == "xxx"(defined in your package)
+	// actually just to check the "forTest" property can confirm that, but that field is not exported.
+	return pkg.Module == nil && (strings.HasSuffix(pkg.PkgPath, ".test") || strings.HasSuffix(pkg.PkgPath, "_test"))
 }
 
 func IsVendor(modDir string, subPath string) bool {
@@ -482,14 +487,14 @@ func joinRecvArgs(recvCode string, args string, recvOrigName string, needEmptyNa
 }
 
 // name -> EXPORTED name
-func exportUnexported(f *ast.File, fset *token.FileSet, needExportNames map[string]string, session *helper.Session) {
+func exportUnexported(f *ast.File, fset *token.FileSet, needExportNames map[string]string, buf *edit.Buffer) {
 	for _, decl := range f.Decls {
 		if gdecl, ok := decl.(*ast.GenDecl); ok && gdecl.Tok == token.TYPE {
 			for _, spec := range gdecl.Specs {
 				if tspec, ok := spec.(*ast.TypeSpec); ok {
 					exportedName := needExportNames[tspec.Name.Name]
 					if exportedName != "" {
-						session.Add(OffsetOf(fset, gdecl.End()), fmt.Sprintf(";type %s = %s", exportedName, tspec.Name.Name))
+						buf.Insert(OffsetOf(fset, gdecl.End()), fmt.Sprintf(";type %s = %s", exportedName, tspec.Name.Name))
 					}
 				}
 			}
@@ -849,18 +854,18 @@ func (c FieldList) AllTypesVisible() bool {
 	}
 	return true
 }
-func (c FieldList) RenameFields(fset *token.FileSet, session *helper.Session) {
+func (c FieldList) RenameFields(fset *token.FileSet, buf *edit.Buffer) {
 	for _, f := range c {
-		f.Rename(fset, session)
+		f.Rename(fset, buf)
 	}
 }
-func (c *Field) Rename(fset *token.FileSet, session *helper.Session) {
+func (c *Field) Rename(fset *token.FileSet, buf *edit.Buffer) {
 	// always rewrite if: origName does not exist, or has been renamed
 	if c.OrigName == "" || c.OrigName == "_" || c.OrigName != c.Name {
 		if c.NameNode == nil {
-			session.Add(OffsetOf(fset, c.TypeExpr.Pos()), c.Name+" ")
+			buf.Insert(OffsetOf(fset, c.TypeExpr.Pos()), c.Name+" ")
 		} else {
-			session.Substitute(OffsetOf(fset, c.NameNode.Pos()), OffsetOf(fset, c.NameNode.End()), c.Name)
+			buf.Replace(OffsetOf(fset, c.NameNode.Pos()), OffsetOf(fset, c.NameNode.End()), c.Name)
 		}
 	}
 }

@@ -19,7 +19,7 @@ go run -mod=readonly github.com/xhd2015/go-mock build -o ./exec.bin -v ./path/to
 go run -mod=readonly github.com/xhd2015/go-mock run -v ./path/to/your_main_package
 ```
 
-For a working example, check [example/demo/README.md](./example/demo/README.md) for more details.
+For a working example, check [example/demo](./example/demo) for more details.
 
 # Features
 - Source code function extraction;
@@ -32,6 +32,13 @@ For a working example, check [example/demo/README.md](./example/demo/README.md) 
 - build with go compiler, no dependency on any architecture nor os;
 - Work on any platform: amd64, arm64...
 - Work on any os: windows, linux, darwin...
+
+# Integrate this library into tests
+For business development usage, we recommend putting all test data and code into the top level directory `test`, to separate concern between product code and testing code.
+
+You can make your own testing code layout by copying all contents under the [archtype](./archtype/) directory into your `test` directory. 
+
+NOTE: it is important that [archtype/vendorhelp/vendorhelp.go](./archtype/vendorhelp/vendorhelp.go) should be included in your code base. Since `go-mock` is a main package, normally its code will not be included in the go's `vendor` directory, making it inconvienent to run in offline enviornment like CI. To include the `vendorhelp` but not really import it anywhere, the `go-mock` can be built and run from source directly, without having to pre-build one.
 
 # Advaced usage
 ## `-v` verbose flag
