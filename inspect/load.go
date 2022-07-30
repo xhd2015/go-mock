@@ -252,7 +252,7 @@ func GetRelativePath(modPath string, pkgPath string) string {
 		panic(fmt.Errorf("GetRelativePath empty pkgPath"))
 	}
 	if strings.HasPrefix(pkgPath, modPath) {
-		return pkgPath[len(modPath):]
+		return strings.TrimPrefix(pkgPath[len(modPath):], "/")
 	}
 	panic(fmt.Errorf("%s not child of %s", pkgPath, modPath))
 }

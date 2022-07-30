@@ -24,7 +24,7 @@ import (
 // For unexported types and their dependency unexported types,
 // an exported name will be made available to external packages.
 
-const MOCK_PKG = "github.com/xhd2015/go-mock/mock"
+const MOCK_PKG = "github.com/xhd2015/go-mock/inspect/mock"
 const SKIP_MOCK_PKG = "_SKIP_MOCK"
 const SKIP_MOCK_FILE = "_SKIP_MOCK_THIS_FILE"
 
@@ -44,8 +44,11 @@ type ContentError struct {
 
 	// exported types
 	// function prototypes are based on
-	MockContent string
-	Error       error // error if any
+	MockContent      string
+	MockContentError error // error if any
+	// MockInfoCode type for mockable functions
+	MockInfoCode  string
+	MockInfoError error
 }
 type FileContentError struct {
 	OrigFile string // a repeat of the key
@@ -106,8 +109,8 @@ func rewritePackage(p *packages.Package, fset *token.FileSet, opts *RewriteOptio
 			continue
 		}
 
-		content, details, noChange, err := rewriteFile(p, pkgPath, fset, f, fname, opts)
-		if noChange {
+		content, details, noMockInserted, err := rewriteFile(p, pkgPath, fset, f, fname, opts)
+		if noMockInserted {
 			continue
 		}
 		m[fname] = &FileContentError{OrigFile: fname, Content: content, Error: err}
@@ -118,14 +121,14 @@ func rewritePackage(p *packages.Package, fset *token.FileSet, opts *RewriteOptio
 		return nil
 	}
 
-	mockStub, err := genMockStub(p, fileDetails)
+	mockStub, mockStubErr := genMockStub(p, fileDetails)
 
 	// gen from details
 	return &ContentError{
-		PkgPath:     pkgPath,
-		Files:       m,
-		MockContent: mockStub,
-		Error:       err,
+		PkgPath:          pkgPath,
+		Files:            m,
+		MockContent:      mockStub,
+		MockContentError: mockStubErr,
 	}
 }
 
@@ -164,8 +167,8 @@ type NameAlias struct {
 	Use   string // the effective appearance
 }
 
-func rewriteFile(pkg *packages.Package, pkgPath string, fset *token.FileSet, f *ast.File, fileName string, opts *RewriteOptions) (rewriteContent string, detail *RewriteFileDetail, noChange bool, err error) {
-	// fileName is always is absolute
+func rewriteFile(pkg *packages.Package, pkgPath string, fset *token.FileSet, f *ast.File, fileName string, opts *RewriteOptions) (rewriteContent string, detail *RewriteFileDetail, noMockInserted bool, err error) {
+	// fileName is always absolute
 	content, err := ioutil.ReadFile(fileName)
 	if err != nil {
 		err = fmt.Errorf("rewriteFile:read file error:%v", err)
@@ -173,7 +176,15 @@ func rewriteFile(pkg *packages.Package, pkgPath string, fset *token.FileSet, f *
 	}
 	funcDetails := make([]*rewriteFuncDetail, 0, 4)
 	buf := edit.NewBuffer(content)
-	mockImported := false
+
+	// import mock
+	var mockPkgImp string
+	getMockPkgImp := func() string {
+		if mockPkgImp == "" {
+			mockPkgImp, _ = ensureImports(fset, f, buf, "_mock", "mock", MOCK_PKG)
+		}
+		return mockPkgImp
+	}
 
 	starterTypesMapping := make(map[types.Type]bool)
 	starterTypes := make([]types.Type, 0)
@@ -203,6 +214,7 @@ func rewriteFile(pkg *packages.Package, pkgPath string, fset *token.FileSet, f *
 			funcName := n.Name.Name
 
 			// package level init function cannot be mocked
+			// because go allows init be defined multiple times in a file,and across files
 			if ownerType == "" && funcName == "init" {
 				return true
 			}
@@ -226,13 +238,11 @@ func rewriteFile(pkg *packages.Package, pkgPath string, fset *token.FileSet, f *
 				// no ctx
 				return true
 			}
+
+			rc.SupportPkgRef = getMockPkgImp()
+
 			rc.AllFields.FillFieldTypeExpr(fset, content)
 			rc.Init()
-
-			if !mockImported {
-				ensureImports(fset, f, buf, "_mock", MOCK_PKG)
-				mockImported = true
-			}
 
 			// rewrite names
 			rc.AllFields.RenameFields(fset, buf)
@@ -314,15 +324,16 @@ func rewriteFile(pkg *packages.Package, pkgPath string, fset *token.FileSet, f *
 				},
 			})
 
-			// traverse to export unexported names
+			// add starter types
+			// starter types are entrance for export
 			for _, arg := range rc.AllFields {
 				addType(arg.Type.ResolvedType)
 			}
 		}
 		return true
 	})
-	noChange = len(funcDetails) == 0
-	if noChange {
+	noMockInserted = len(funcDetails) == 0
+	if noMockInserted {
 		return
 	}
 
@@ -365,6 +376,15 @@ func rewriteFile(pkg *packages.Package, pkgPath string, fset *token.FileSet, f *
 		}
 		return false
 	})
+	var reflectPkgImp string
+	getReflectPkgImp := func() string {
+		if reflectPkgImp == "" {
+			reflectPkgImp, _ = ensureImports(fset, f, buf, "", "reflect", "reflect")
+		}
+		return reflectPkgImp
+	}
+
+	regCode := genRegCode(funcDetails, pkgPath, getMockPkgImp, getReflectPkgImp)
 
 	// collect need exported names
 	if false /*make unexported*/ {
@@ -379,8 +399,61 @@ func rewriteFile(pkg *packages.Package, pkgPath string, fset *token.FileSet, f *
 		ImportPkgByTypes: importPkgByTypes,
 		GetContentByPos:  getContentByPos,
 	}
-	rewriteContent = buf.String()
+	rewriteContent = buf.String() + "\n" + regCode + "\n"
 	return
+}
+
+func genRegCode(funcDetails []*rewriteFuncDetail, pkgPath string, getMockImpName func() string, getReflectImpName func() string) string {
+	// gen register mock call
+	regT := gen.NewTemplateBuilder()
+	regT.Block(
+		"var _ = func() bool {",
+		fmt.Sprintf("    pkgPath := %q", pkgPath),
+	)
+
+	getFields := func(args FieldList) string {
+		list := make([]string, 0, len(args))
+		for _, arg := range args {
+			list = append(list,
+				fmt.Sprintf("%s.NewTypeInfo(%q, %s.TypeOf((*%s)(nil)).Elem())",
+					getMockImpName(),
+					arg.Name,
+					getReflectImpName(),
+					deEllipsisTypeStr(arg),
+				))
+		}
+		return strings.Join(list, ",")
+	}
+
+	for _, fd := range funcDetails {
+		fdT := gen.NewTemplateBuilder()
+		fdT.Block(
+			"__MOCKP__.RegisterMockStub(pkgPath, __OWNER_TYPE_NAMEQ__,__OWNER_TYPE__,__FUNC_NAMEQ__, []__MOCKP__.TypeInfo{__ARGS__},[]__MOCKP__.TypeInfo{__RESULTS__},__ARGCTX__,__RESERR__)",
+		)
+
+		ownerType := "nil"
+		if fd.RewriteConfig.Recv != nil {
+			ownerType = fmt.Sprintf("%s.TypeOf((*%s)(nil)).Elem()", getReflectImpName(), deEllipsisTypeStr(fd.RewriteConfig.Recv))
+		}
+
+		fdRegCode := fdT.Format(gen.VarMap{
+			"__MOCKP__":            fd.RewriteConfig.SupportPkgRef,
+			"__OWNER_TYPE_NAMEQ__": strconv.Quote(fd.RewriteConfig.Owner),
+			"__OWNER_TYPE__":       ownerType,
+			"__FUNC_NAMEQ__":       strconv.Quote(fd.RewriteConfig.FuncName),
+			"__ARGS__":             getFields(fd.RewriteConfig.Args),
+			"__RESULTS__":          getFields(fd.RewriteConfig.Results),
+			"__ARGCTX__":           strconv.FormatBool(fd.RewriteConfig.FirstArgIsCtx),
+			"__RESERR__":           strconv.FormatBool(fd.RewriteConfig.LastResIsError),
+		})
+
+		regT.Block(gen.Indent("    ", fdRegCode))
+	}
+	regT.Block(
+		"    return true",
+		"} ()",
+	)
+	return regT.Format(nil)
 }
 func IsInternalPkg(pkgPath string) bool {
 	return ContainsSplitWith(pkgPath, "internal", '/')
@@ -628,7 +701,7 @@ func initRewriteConfig(pkg *packages.Package, decl *ast.FuncDecl, skipNonCtx boo
 			continue
 		}
 
-		field.Name = nextName(func(k string) bool {
+		field.Name = NextName(func(k string) bool {
 			if rc.Names[k] || usedSelector[k] {
 				return false
 			}
@@ -807,11 +880,11 @@ type RewriteConfig struct {
 	FirstArgIsCtx  bool
 	LastResIsError bool
 	Recv           *Field
-	FullArgs       FieldList
-	FullResults    FieldList
+	FullArgs       FieldList // args including first ctx
+	FullResults    FieldList // results includeing last error
 	AllFields      FieldList // all fields, including recv(if any),args,results
-	Args           FieldList
-	Results        FieldList
+	Args           FieldList // args excluding first ctx
+	Results        FieldList // results excluding last error
 }
 
 type Signature struct {
@@ -944,6 +1017,13 @@ func (c *RewriteConfig) Validate() {
 	}
 }
 
+func deEllipsisTypeStr(f *Field) string {
+	if !f.Ellipsis {
+		return f.TypeExprString
+	}
+	return "[]" + strings.TrimPrefix(f.TypeExprString, "...") // hack: replace ... with []
+}
+
 func (c *RewriteConfig) Gen(pretty bool) string {
 	c.Validate()
 
@@ -955,11 +1035,7 @@ func (c *RewriteConfig) Gen(pretty bool) string {
 	makeStructDefs := func(c FieldList) string {
 		reqDefList := make([]string, 0, len(c))
 		for _, f := range c {
-			typeExpr := f.TypeExprString
-			if f.Ellipsis {
-				typeExpr = "[]" + strings.TrimPrefix(typeExpr, "...") // hack: replace ... with []
-			}
-			reqDefList = append(reqDefList, fmt.Sprintf("%v %s `json:%v`", f.ExportedName, typeExpr, strconv.Quote(f.Name)))
+			reqDefList = append(reqDefList, fmt.Sprintf("%v %s `json:%v`", f.ExportedName, deEllipsisTypeStr(f), strconv.Quote(f.Name)))
 		}
 
 		structDefs := strings.Join(reqDefList, ";")

@@ -1,6 +1,7 @@
 package mock
 
 import (
+	"github.com/xhd2015/go-mock/inspect/typeinfo"
 	"github.com/xhd2015/go-mock/mock"
 )
 
@@ -13,3 +14,9 @@ type StubInfo = mock.StubInfo
 
 var TrapFunc = mock.TrapFunc
 var WithMockSetup = mock.WithMockSetup
+
+var RegisterMockStub = mock.RegisterMockStub
+
+type TypeInfo = typeinfo.TypeInfo
+
+var NewTypeInfo = typeinfo.NewTypeInfo

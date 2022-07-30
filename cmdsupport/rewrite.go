@@ -2,7 +2,6 @@ package cmdsupport
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"path"
@@ -13,8 +12,10 @@ import (
 
 	"golang.org/x/tools/go/packages"
 
+	"github.com/xhd2015/go-mock/code/gen"
 	"github.com/xhd2015/go-mock/filecopy"
 	"github.com/xhd2015/go-mock/inspect"
+	"github.com/xhd2015/go-mock/sh"
 )
 
 type GenRewriteOptions struct {
@@ -84,22 +85,35 @@ func GenRewrite(args []string, rootDir string, opts *GenRewriteOptions) (res *Ge
 	if err != nil {
 		panic(fmt.Errorf("error mkdir %s %v", rootDir, err))
 	}
+	needGenMock := !skipGenMock  // gen mock inside test/mock_stub
+	needMockRegistering := false // gen mock registering info,for debug info. TODO: may use another option
+	needAnyMockStub := needGenMock || needMockRegistering
 
-	stubGenDir := ""
-	projectDir := ""
-	if opts != nil {
-		projectDir = opts.ProjectDir
-		stubGenDir = opts.StubGenDir
-	}
-	if stubGenDir == "" {
-		stubGenDir = "test/mock_gen"
-	}
+	stubGenDir := opts.StubGenDir
+	projectDir := opts.ProjectDir
 	projectDir, err = toAbsPath(projectDir)
 	if err != nil {
 		panic(fmt.Errorf("get abs dir err:%v", err))
 	}
+	stubInitEntryDir := "" // ${stubGenDir}/${xxxName}_init
+	if needAnyMockStub && stubGenDir == "" {
+		if needGenMock {
+			stubGenDir = "test/mock_gen"
+		} else {
+			// try mock_gen, mock_gen1,...
+			stubGenDir = inspect.NextFileNameUnderDir(projectDir, "mock_gen", "")
+			stubInitEntryDir = stubGenDir + "/" + stubGenDir + "_init"
+		}
+	}
+	if needAnyMockStub && stubInitEntryDir == "" {
+		// try mock_gen_init, mock_gen_init1,...
+		genName := inspect.NextFileNameUnderDir(projectDir, "mock_gen_init", "")
+		stubInitEntryDir = stubGenDir + "/" + genName
+	}
+	stubRelGenDir := ""
 	// make absolute
 	if !path.IsAbs(stubGenDir) {
+		stubRelGenDir = stubGenDir
 		stubGenDir = path.Join(projectDir, stubGenDir)
 	}
 
@@ -123,19 +137,25 @@ func GenRewrite(args []string, rootDir string, opts *GenRewriteOptions) (res *Ge
 	if verbose {
 		log.Printf("current module: %s , dir %s", modPath, modDir)
 	}
+	if len(starterPkgs) == 0 {
+		panic(fmt.Errorf("no packages loaded."))
+	}
+	starterPkg0 := starterPkgs[0]
+	starterPkg0Dir := inspect.GetFsPathOfPkg(starterPkg0.Module, starterPkg0.PkgPath)
 
 	destFsPath := func(origFsPath string) string {
 		return path.Join(rootDir, origFsPath)
 	}
-	// return absolute directory
-	stubFsDir := func(pkgModPath, pkgPath string) string {
+
+	// return relative directory
+	stubFsRelDir := func(pkgModPath, pkgPath string) string {
 		rel := ""
 		if pkgModPath == modPath {
 			rel = inspect.GetRelativePath(pkgModPath, pkgPath)
 		} else {
 			rel = path.Join("ext", pkgPath)
 		}
-		return path.Join(stubGenDir, rel)
+		return rel
 	}
 
 	// init rewrite opts
@@ -267,181 +287,137 @@ func GenRewrite(args []string, rootDir string, opts *GenRewriteOptions) (res *Ge
 		doMod()
 	}
 
-	useOldCopy := false
-
 	writeContentTime := time.Now()
 	// overwrite new content
 	nrewriteFile := 0
 	nmock := 0
-	if !useOldCopy {
-		type content struct {
-			srcFile string
-			bytes   []byte
+	type content struct {
+		srcFile string
+		bytes   []byte
+	}
+
+	var mockPkgList []string
+
+	backMap := make(map[string]*content)
+	for _, pkgRes := range contents {
+		pkgPath := pkgRes.PkgPath
+		pkg := pkgMap[pkgPath]
+		if pkg == nil {
+			panic(fmt.Errorf("pkg not found:%v", pkgPath))
 		}
 
-		backMap := make(map[string]*content)
-		for _, pkgRes := range contents {
-			pkgPath := pkgRes.PkgPath
-			pkg := pkgMap[pkgPath]
-			if pkg == nil {
-				panic(fmt.Errorf("pkg not found:%v", pkgPath))
+		// generate rewritting files
+		for _, fileRes := range pkgRes.Files {
+			if fileRes.OrigFile == "" {
+				panic(fmt.Errorf("orig file not found:%v", pkgPath))
 			}
-
-			// generate rewritting files
-			for _, fileRes := range pkgRes.Files {
-				if fileRes.OrigFile == "" {
-					panic(fmt.Errorf("orig file not found:%v", pkgPath))
-				}
-				if pkgRes.Error != nil {
-					continue
-				}
-				nrewriteFile++
-				backMap[cleanGoFsPath(destFsPath(fileRes.OrigFile))] = &content{
-					srcFile: fileRes.OrigFile,
-					bytes:   []byte(fileRes.Content),
-				}
+			if pkgRes.MockContentError != nil {
+				continue
 			}
-			if !skipGenMock {
-				// generate mock stubs
-				if pkgRes.Error == nil && pkgRes.MockContent != "" {
-					// relative to current module
-					genDir := stubFsDir(pkg.Module.Path, pkgPath)
-					genFile := path.Join(genDir, "mock.go")
-					if verboseRewrite || (verbose && len(allPkgs) < 10) {
-						log.Printf("generate mock file %s", genFile)
-					}
-
-					pkgDir := inspect.GetFsPathOfPkg(pkg.Module, pkgPath)
-
-					mockContent := []byte(pkgRes.MockContent)
-					backMap[genFile] = &content{
-						srcFile: pkgDir,
-						bytes:   mockContent,
-					}
-					nmock++
-					genRewriteFile := destFsPath(genFile)
-					backMap[genRewriteFile] = &content{
-						srcFile: pkgDir,
-						bytes:   mockContent,
-					}
-				}
+			nrewriteFile++
+			backMap[cleanGoFsPath(destFsPath(fileRes.OrigFile))] = &content{
+				srcFile: fileRes.OrigFile,
+				bytes:   []byte(fileRes.Content),
 			}
 		}
-
-		// in this copy config, srcPath is the same with destPath
-		// the extra info is looked up in a back map
-		filecopy.SyncGenerated(
-			func(fn func(path string)) {
-				for path := range backMap {
-					fn(path)
-				}
-			},
-			func(name string) []byte {
-				c, ok := backMap[name]
-				if !ok {
-					panic(fmt.Errorf("no such file:%v", name))
-				}
-				return c.bytes
-			},
-			"", // already rooted
-			func(filePath, destPath string, destFileInfo os.FileInfo) bool {
-				// if ever updated by source, then we always need to update again.
-				// NOTE: this only applies to rewritten file,mock file not influenced.
-				if destUpdatedBySource[filePath] {
-					// log.Printf("DEBUG update by source:%v", filePath)
-					return true
-				}
-				modTime, ferr := filecopy.GetNewestModTime(backMap[filePath].srcFile)
-				if ferr != nil {
-					panic(ferr)
-				}
-				return !modTime.IsZero() && modTime.After(destFileInfo.ModTime())
-			},
-			filecopy.SyncRebaseOptions{
-				Force:   force,
-				Ignores: ignores,
-				// ProcessDestPath: cleanFsGoPath, // not needed as we already did that
-				OnUpdateStats: filecopy.NewLogger(func(format string, args ...interface{}) {
-					log.Printf(format, args...)
-				}, verboseRewrite, verbose, 200*time.Millisecond),
-			},
-		)
-	} else {
-		// collect directories to be created,and create them first
-		if !skipGenMock {
-			var dirCmds []string
-			for _, pkgRes := range contents {
-				pkgPath := pkgRes.PkgPath
-				pkg := pkgMap[pkgPath]
-				if pkg == nil {
-					panic(fmt.Errorf("pkg not found:%v", pkgPath))
-				}
-				if pkgRes.Error == nil && pkgRes.MockContent != "" {
-					genDir := stubFsDir(pkg.Module.Path, pkgPath)
-					genRewriteDir := destFsPath(genDir)
-					dirCmds = append(dirCmds,
-						fmt.Sprintf("mkdir -p %s", Quote(genDir)),
-						fmt.Sprintf("mkdir -p %s", Quote(genRewriteDir)),
-					)
-				}
-			}
-			if len(dirCmds) > 0 {
-				err := RunBash(dirCmds, verboseRewrite)
-				if err != nil {
-					panic(fmt.Errorf("create dir error:%v", err))
-				}
-			}
-		}
-		for _, pkgRes := range contents {
-			pkgPath := pkgRes.PkgPath
-			pkg := pkgMap[pkgPath]
-			if pkg == nil {
-				panic(fmt.Errorf("pkg not found:%v", pkgPath))
+		// generate mock stubs
+		if needAnyMockStub && pkgRes.MockContentError == nil && pkgRes.MockContent != "" {
+			// relative to current module
+			rel := stubFsRelDir(pkg.Module.Path, pkgPath)
+			genDir := path.Join(stubGenDir, rel)
+			genFile := path.Join(genDir, "mock.go")
+			if verboseRewrite || (verbose && len(allPkgs) < 10) {
+				log.Printf("generate mock file %s", genFile)
 			}
 
-			// generate rewritting files
-			for _, fileRes := range pkgRes.Files {
-				if fileRes.OrigFile == "" {
-					panic(fmt.Errorf("orig file not found:%v", pkgPath))
-				}
-				if pkgRes.Error != nil {
-					continue
-				}
-				nrewriteFile++
-				destFile := cleanGoFsPath(destFsPath(fileRes.OrigFile))
-				if verboseRewrite || len(allPkgs) < 10 {
-					log.Printf("rewrite file %s , original file %s", destFile, fileRes.OrigFile)
-				}
-				err = ioutil.WriteFile(destFile, []byte(fileRes.Content), 0666)
-				if err != nil {
-					panic(fmt.Errorf("write file error:%v %v", destFile, err))
+			pkgDir := inspect.GetFsPathOfPkg(pkg.Module, pkgPath)
+
+			mockContent := []byte(pkgRes.MockContent)
+
+			if needGenMock {
+				backMap[genFile] = &content{
+					srcFile: pkgDir,
+					bytes:   mockContent,
 				}
 			}
 
-			if !skipGenMock {
-				// generate mock stubs
-				if pkgRes.Error == nil && pkgRes.MockContent != "" {
-					// relative to current module
-					genDir := stubFsDir(pkg.Module.Path, pkgPath)
-					genFile := path.Join(genDir, "mock.go")
-					if verboseRewrite || len(allPkgs) < 10 {
-						log.Printf("generate mock file %s", genFile)
-					}
-					nmock++
-					mockContent := []byte(pkgRes.MockContent)
-					err = ioutil.WriteFile(genFile, mockContent, 0666)
-					if err != nil {
-						panic(fmt.Errorf("write file error:%v %v", genFile, err))
-					}
-					genRewriteFile := destFsPath(genFile)
-					err = ioutil.WriteFile(genRewriteFile, mockContent, 0666)
-					if err != nil {
-						panic(fmt.Errorf("write file error:%v %v", genRewriteFile, err))
-					}
+			// TODO: may skip this for 'go test'
+			if needMockRegistering {
+				genRewriteFile := destFsPath(genFile)
+				backMap[genRewriteFile] = &content{
+					srcFile: pkgDir,
+					bytes:   mockContent,
 				}
+				rdir := ""
+				if stubGenDir != "" {
+					rdir = "/" + strings.TrimPrefix(stubRelGenDir, "/")
+				}
+				mockPkgList = append(mockPkgList, pkg.Module.Path+rdir+"/"+rel)
+				nmock++
 			}
 		}
 	}
+
+	if needMockRegistering {
+		addMockRegisterContent := func(stubInitEntryDir string, mockPkgList []string) {
+			// an entry init.go to import all registering types
+			stubGenCode := genImportListContent(stubInitEntryDir, mockPkgList)
+			backMap[destFsPath(path.Join(modDir, stubInitEntryDir, "init.go"))] = &content{
+				bytes: []byte(stubGenCode),
+			}
+
+			// create a mock_init.go aside with original project files, to import the entry file above
+			starterName := inspect.NextFileNameUnderDir(starterPkg0Dir, "mock_init", ".go")
+			backMap[destFsPath(path.Join(starterPkg0Dir, starterName))] = &content{
+				bytes: []byte(fmt.Sprintf("package %s\nimport _ %q", starterPkg0.Name, modPath+"/"+stubInitEntryDir)),
+			}
+		}
+		addMockRegisterContent(stubInitEntryDir, mockPkgList)
+	}
+
+	// in this copy config, srcPath is the same with destPath
+	// the extra info is looked up in a back map
+	filecopy.SyncGenerated(
+		func(fn func(path string)) {
+			for path := range backMap {
+				fn(path)
+			}
+		},
+		func(name string) []byte {
+			c, ok := backMap[name]
+			if !ok {
+				panic(fmt.Errorf("no such file:%v", name))
+			}
+			return c.bytes
+		},
+		"", // already rooted
+		func(filePath, destPath string, destFileInfo os.FileInfo) bool {
+			// if ever updated by source, then we always need to update again.
+			// NOTE: this only applies to rewritten file,mock file not influenced.
+			if destUpdatedBySource[filePath] {
+				// log.Printf("DEBUG update by source:%v", filePath)
+				return true
+			}
+			backFile := backMap[filePath].srcFile
+			if backFile == "" {
+				return true // should always copy if no back file
+			}
+			modTime, ferr := filecopy.GetNewestModTime(backFile)
+			if ferr != nil {
+				panic(ferr)
+			}
+			return !modTime.IsZero() && modTime.After(destFileInfo.ModTime())
+		},
+		filecopy.SyncRebaseOptions{
+			Force:   force,
+			Ignores: ignores,
+			// ProcessDestPath: cleanFsGoPath, // not needed as we already did that
+			OnUpdateStats: filecopy.NewLogger(func(format string, args ...interface{}) {
+				log.Printf(format, args...)
+			}, verboseRewrite, verbose, 200*time.Millisecond),
+		},
+	)
+
 	writeContentEnd := time.Now()
 	if verboseCost {
 		log.Printf("COST write content:%v", writeContentEnd.Sub(writeContentTime))
@@ -624,27 +600,7 @@ func makeGomodReplaceAboslute(modPkgs []*packages.Package, extraPkgs []*packages
 		if rebaseDir != "" {
 			dir = path.Join(rebaseDir, dir)
 		}
-
-		type Module struct {
-			Path    string
-			Version string
-		}
-		type Replace struct {
-			Old Module
-			New Module
-		}
-		type GoMod struct {
-			Replace []Replace
-		}
-
-		var gomod GoMod
-		_, _, err := RunBashWithOpts([]string{
-			fmt.Sprintf("cd %s", Quote(dir)),
-			"go mod edit -json", // get json
-		}, RunBashOptions{
-			Verbose:      false, // don't make read verbose
-			StdoutToJSON: &gomod,
-		})
+		gomod, err := inspect.GetGoMod(dir)
 		if err != nil {
 			panic(err)
 		}
@@ -678,11 +634,28 @@ func makeGomodReplaceAboslute(modPkgs []*packages.Package, extraPkgs []*packages
 				fmt.Sprintf("cd %s", Quote(dir)),
 			}, replaceList...)
 			cmds = append(cmds, preCmdList...)
-			err = RunBash(cmds, verbose)
+			err = sh.RunBash(cmds, verbose)
 			if err != nil {
 				panic(err)
 			}
 		}
 	}
 	return
+}
+
+// genImportListContent
+// Deprecated: mock are registered in original package,not in a standalone import file
+func genImportListContent(stubInitEntryDir string, mockPkgList []string) string {
+	stubGen := gen.NewTemplateBuilder().Block(
+		fmt.Sprintf("package %s", path.Base(stubInitEntryDir)),
+		"",
+		"import (",
+	)
+	for _, mokcPkg := range mockPkgList {
+		stubGen.Block(fmt.Sprintf(`    _ %q`, mokcPkg))
+	}
+	stubGen.Block(
+		")",
+	)
+	return stubGen.Format(nil)
 }

@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"io/ioutil"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
@@ -64,7 +65,7 @@ func fileNameOf(fset *token.FileSet, f *ast.File) string {
 	return tokenFile.Name()
 }
 
-func nextName(addIfNotExists func(string) bool, name string) string {
+func NextName(addIfNotExists func(string) bool, name string) string {
 	if addIfNotExists(name) {
 		return name
 	}
@@ -75,6 +76,18 @@ func nextName(addIfNotExists func(string) bool, name string) string {
 		}
 	}
 	panic(fmt.Errorf("nextName failed, tried 10,0000 times.name: %v", name))
+}
+
+func NextFileNameUnderDir(dir string, name string, suffix string) string {
+	starterNames, _ := ioutil.ReadDir(dir)
+	return NextName(func(s string) bool {
+		for _, f := range starterNames {
+			if f.Name() == s+suffix {
+				return false
+			}
+		}
+		return true
+	}, name) + suffix
 }
 
 // empty if not set

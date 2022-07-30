@@ -1,0 +1,189 @@
+{
+  "uri": "github.com/xhd2015/go-mock/inspect/typeinfo.TestUser",
+  "properties": {
+    "some_base_property": {
+      "type": "integer"
+    },
+    "SomeBasePropertyYaml": {
+      "type": "integer"
+    },
+    "SomeSchemaIgnoredProperty": {
+      "type": "string"
+    },
+    "grand": {
+      "$ref": "github.com/xhd2015/go-mock/inspect/typeinfo.GrandfatherType"
+    },
+    "SomeUntaggedBaseProperty": {
+      "type": "boolean"
+    },
+    "PublicNonExported": {
+      "type": "integer"
+    },
+    "id": {
+      "type": "integer"
+    },
+    "name": {
+      "type": "string"
+    },
+    "password": {
+      "type": "string"
+    },
+    "friends": {
+      "$ref": "6"
+    },
+    "tags": {
+      "$ref": "7"
+    },
+    "TestFlag": {
+      "type": "boolean"
+    },
+    "birth_date": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "photo": {
+      "$ref": "8"
+    },
+    "photo2": {
+      "$ref": "github.com/xhd2015/go-mock/inspect/typeinfo.Bytes"
+    },
+    "feeling": {
+      "type": "integer"
+    },
+    "age": {
+      "type": "integer"
+    },
+    "email": {
+      "type": "string"
+    },
+    "Baz": {
+      "type": "string"
+    },
+    "color": {
+      "type": "string"
+    },
+    "rank": {
+      "type": "integer"
+    },
+    "mult": {
+      "type": "number"
+    },
+    "roles": {
+      "$ref": "10"
+    },
+    "priorities": {
+      "$ref": "6"
+    },
+    "offsets": {
+      "$ref": "11"
+    },
+    "raw": {
+      "$ref": "encoding/json.RawMessage"
+    }
+  },
+  "type": "object",
+  "Definitions": {
+    "10": {
+      "uri": "10",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "11": {
+      "uri": "11",
+      "items": {
+        "type": "number"
+      },
+      "type": "array"
+    },
+    "5": {
+      "uri": "5"
+    },
+    "6": {
+      "uri": "6",
+      "items": {
+        "type": "integer"
+      },
+      "type": "array"
+    },
+    "7": {
+      "uri": "7",
+      "patternProperties": {
+        ".*": {
+          "$ref": "5"
+        }
+      },
+      "type": "object"
+    },
+    "8": {
+      "uri": "8",
+      "items": {
+        "type": "integer"
+      },
+      "type": "array"
+    },
+    "encoding/json.RawMessage": {
+      "uri": "encoding/json.RawMessage",
+      "items": {
+        "type": "integer"
+      },
+      "type": "array"
+    },
+    "github.com/xhd2015/go-mock/inspect/typeinfo.Bytes": {
+      "uri": "github.com/xhd2015/go-mock/inspect/typeinfo.Bytes",
+      "items": {
+        "type": "integer"
+      },
+      "type": "array"
+    },
+    "github.com/xhd2015/go-mock/inspect/typeinfo.GrandfatherType": {
+      "uri": "github.com/xhd2015/go-mock/inspect/typeinfo.GrandfatherType",
+      "properties": {
+        "family_name": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "github.com/xhd2015/go-mock/inspect/typeinfo.MapType": {
+      "uri": "github.com/xhd2015/go-mock/inspect/typeinfo.MapType",
+      "patternProperties": {
+        ".*": {
+          "$ref": "5"
+        }
+      },
+      "type": "object"
+    },
+    "github.com/xhd2015/go-mock/inspect/typeinfo.SomeBaseType": {
+      "uri": "github.com/xhd2015/go-mock/inspect/typeinfo.SomeBaseType",
+      "properties": {
+        "some_base_property": {
+          "type": "integer"
+        },
+        "SomeBasePropertyYaml": {
+          "type": "integer"
+        },
+        "SomeSchemaIgnoredProperty": {
+          "type": "string"
+        },
+        "grand": {
+          "$ref": "github.com/xhd2015/go-mock/inspect/typeinfo.GrandfatherType"
+        },
+        "SomeUntaggedBaseProperty": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "github.com/xhd2015/go-mock/inspect/typeinfo.nonExported": {
+      "uri": "github.com/xhd2015/go-mock/inspect/typeinfo.nonExported",
+      "properties": {
+        "PublicNonExported": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  }
+}

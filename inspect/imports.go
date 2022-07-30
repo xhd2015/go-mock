@@ -51,7 +51,7 @@ func (c *ImportList) ImportOrUseNext(pkgPath string, suggestAlias string, name s
 	}
 
 	// try next name
-	return nextName(func(s string) bool {
+	return NextName(func(s string) bool {
 		if c.CanUseName != nil && !c.CanUseName(s) {
 			return false
 		}
@@ -106,20 +106,30 @@ func formatImport(pkgPath string, alias string) string {
 	return fmt.Sprintf("%q", pkgPath)
 }
 
-func ensureImports(fset *token.FileSet, f *ast.File, buf *edit.Buffer, alias string, path string) (exAlias string, exists bool) {
-	exAlias, exists = getFileImport(f, path)
+// ensureImports
+// refName represents real name
+func ensureImports(fset *token.FileSet, f *ast.File, buf *edit.Buffer, alias string, name string, path string) (refName string, exists bool) {
+	if name == "" {
+		panic(fmt.Errorf("requires pkg name to be known first"))
+	}
+	refName = name
+	exAlias, exists := getFileImport(f, path)
 	if exists {
+		if exAlias != "" {
+			refName = exAlias
+		}
 		return
 	}
 	off := OffsetOf(fset, f.Name.End())
 	space := ""
 	if alias != "" {
 		space = " "
+		refName = alias
 	}
 	inserts := fmt.Sprintf(";import %s%s%q", alias, space, path)
 	buf.Insert(off, inserts)
 
-	return "", false
+	return
 }
 
 func getFileImport(f *ast.File, path string) (alias string, ok bool) {

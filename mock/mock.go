@@ -58,6 +58,13 @@ type Filter interface {
 
 type Interceptor func(ctx context.Context, stubInfo *StubInfo, inst interface{}, req interface{}, resp interface{}, f Filter, next func(ctx context.Context) error) error
 
+// GetContext defines extension point where
+// when Trap encounters nil context, user can
+// to get a context.
+var GetContext = func(ctx context.Context) context.Context {
+	return ctx
+}
+
 // fnMockKey a universal id of a function
 type fnMockKey struct {
 	pkg   string
@@ -147,6 +154,8 @@ func addInterceptor(h Interceptor) {
 }
 
 func trapFunc(ctx context.Context, stubInfo *StubInfo, inst interface{}, req interface{}, resp interface{}, oldFunc interface{}, hasRecv bool, firstIsCtx bool, lastIsErr bool, needProcessArgs bool) error {
+	ctx = GetContext(ctx)
+
 	f := &filter{}
 	fn := func(ctx context.Context, logger Logger) (err error) {
 		status := MockStatus_NormalResp
@@ -310,14 +319,25 @@ func valuesToStruct(src []reflect.Value, dest interface{}) {
 		v.Field(i).Set(src[i])
 	}
 }
+
 func withMockSetup(ctx context.Context, pkg string, obj interface{}) context.Context {
+	traverseMock(obj, func(owner, name string, fn interface{}) {
+		// register non-nil
+		ctx = WithMock(ctx, pkg, owner, name, fn)
+	})
+	return ctx
+}
+func traverseMock(obj interface{}, callback func(owner string, name string, fn interface{})) {
 	v := reflect.ValueOf(obj)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
 
 	unwrapName := func(name string) string {
 		return strings.TrimPrefix(name, "M_")
 	}
-	var addWithOwner func(x reflect.Value, owner string, depth int)
-	addWithOwner = func(x reflect.Value, owner string, depth int) {
+	var doTraverse func(x reflect.Value, owner string, depth int)
+	doTraverse = func(x reflect.Value, owner string, depth int) {
 		if x.Kind() != reflect.Struct {
 			panic(fmt.Errorf("obj must be type of struct,actual:%T", obj))
 		}
@@ -327,22 +347,22 @@ func withMockSetup(ctx context.Context, pkg string, obj interface{}) context.Con
 			if f.Kind() == reflect.Func {
 				if !f.IsNil() {
 					// register non-nil
-					ctx = WithMock(ctx, pkg, owner, name, f.Interface())
+					callback(owner, name, f.Interface())
 				}
 			} else {
 				if depth > 1 {
 					panic(fmt.Errorf("found non-function at depth:%d", depth))
 				}
-				addWithOwner(f, name, depth+1)
+				doTraverse(f, name, depth+1)
 			}
 		}
 	}
-	addWithOwner(v, "", 0)
-	return ctx
+	doTraverse(v, "", 0)
 }
 
 // getMock supports json and functional mock.
 func getMock(ctx context.Context, stubInfo *StubInfo, inst interface{}, req interface{}, resp interface{}) (fn interface{}, mockResp bool, mockErr error) {
+	ctx = GetContext(ctx)
 	fn = getFunc(ctx, stubInfo.PkgName, stubInfo.Owner, stubInfo.Name)
 	// if fn is nil,then no mock
 	return

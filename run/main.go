@@ -22,9 +22,11 @@ import (
 //   $ go run github.com/xhd2015/go-mock print ./example/rewrite_example.go
 //   $ go run github.com/xhd2015/go-mock rewrite -v ./inspect/testdata/demo/demo.go
 //   $ go run github.com/xhd2015/go-mock build -v -debug ./inspect/testdata/demo/demo.go
+//   $ go run github.com/xhd2015/go-mock print ./support/xgo/inspect/testdata/print/print.go
+//   $ go run github.com/xhd2015/go-mock run ./support/xgo/inspect/testdata/simple_run/simple_run.go
 
 var debug = flag.Bool("debug", false, "build debug(available for: build,run)")
-var output = flag.String("o", "", "output executable(default: exec.bin or debug.bin,available for: build,run)")
+var output = flag.String("o", "", "output executable(default: exec.bin,exec-test.bin,debug.bin or debug-test.bin,available for: build,run,test)")
 var verbose = flag.Bool("v", false, "verbose")
 var veryVerbose = flag.Bool("vv", false, "more verbose")
 var filter = flag.String("filter", "", "specify functions should be mocked.\ntake a regex with matching against the form '<package>::<owner>::<type>'.\nexample: '.*::.*::Run', means matching any package name,any owner type and function name with 'Run'.\nthe special prefix 'not:' will invert the filter.\nexample: 'not:.*::.*::Run'")
