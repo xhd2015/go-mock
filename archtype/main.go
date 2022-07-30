@@ -1,9 +1,6 @@
 package main
 
 import (
-	_ "git.garena.com/shopee/loan-service/credit_backend/credit-pricing-center/src/biz/impl"
-	_ "git.garena.com/shopee/loan-service/credit_backend/credit-pricing-center/src/bizv2/admin/impl"
-
 	"github.com/xhd2015/go-mock/archtype/stub"
 )
 
