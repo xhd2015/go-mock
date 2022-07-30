@@ -156,6 +156,30 @@ func (c *SortedMap) MarshalJSON() ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		
+		// val := c.m[k]
+		// rval := reflect.ValueOf(val)
+
+		// ok := true
+		// switch rval.Kind() {
+		// case reflect.Func, reflect.Chan:
+		// 	ok = false
+		// case reflect.Map:
+		// 	if rval.Type().Elem().Kind() == reflect.Interface && rval.Type().Elem().NumMethod() == 0 {
+		// 		ok = false
+		// 	}
+		// }
+		// var valBytes []byte
+		// if ok {
+		// 	var err error
+		// 	valBytes, err = json.Marshal(val)
+		// 	if err != nil {
+		// 		return nil, err
+		// 	}
+		// } else {
+		// 	valBytes = []byte("null")
+		// }
+
 		buf.Write(keyBytes)
 		buf.WriteByte(':')
 		buf.Write(valBytes)

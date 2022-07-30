@@ -20,3 +20,7 @@ var RegisterMockStub = mock.RegisterMockStub
 type TypeInfo = typeinfo.TypeInfo
 
 var NewTypeInfo = typeinfo.NewTypeInfo
+
+type BuildInfo = mock.BuildInfo
+
+var SetBuildInfo = mock.SetBuildInfo

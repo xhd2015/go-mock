@@ -22,8 +22,8 @@ import (
 //   $ go run github.com/xhd2015/go-mock print ./example/rewrite_example.go
 //   $ go run github.com/xhd2015/go-mock rewrite -v ./inspect/testdata/demo/demo.go
 //   $ go run github.com/xhd2015/go-mock build -v -debug ./inspect/testdata/demo/demo.go
-//   $ go run github.com/xhd2015/go-mock print ./support/xgo/inspect/testdata/print/print.go
-//   $ go run github.com/xhd2015/go-mock run ./support/xgo/inspect/testdata/simple_run/simple_run.go
+//   $ go run github.com/xhd2015/go-mock print ./inspect/testdata/print/print.go
+//   $ go run github.com/xhd2015/go-mock run ./inspect/testdata/simple_run/simple_run.go
 
 var debug = flag.Bool("debug", false, "build debug(available for: build,run)")
 var output = flag.String("o", "", "output executable(default: exec.bin,exec-test.bin,debug.bin or debug-test.bin,available for: build,run,test)")

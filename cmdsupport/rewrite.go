@@ -375,6 +375,13 @@ func GenRewrite(args []string, rootDir string, opts *GenRewriteOptions) (res *Ge
 		addMockRegisterContent(stubInitEntryDir, mockPkgList)
 	}
 
+	// create a mock_build_info.go aside with original project files,
+	// to register build infos
+	buildInfoName := inspect.NextFileNameUnderDir(starterPkg0Dir, "mock_build_info", ".go")
+	backMap[destFsPath(path.Join(starterPkg0Dir, buildInfoName))] = &content{
+		bytes: []byte(fmt.Sprintf("package %s\n\nimport _mock %q\nfunc init(){\n    _mock.SetBuildInfo(&_mock.BuildInfo{MainModule: %q})\n}", starterPkg0.Name, inspect.MOCK_PKG, modPath)),
+	}
+
 	// in this copy config, srcPath is the same with destPath
 	// the extra info is looked up in a back map
 	filecopy.SyncGenerated(

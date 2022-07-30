@@ -81,6 +81,38 @@ type Type struct {
 	Extras map[string]interface{} `json:"-"`
 }
 
+type Generator struct{
+	Defs map[reflect.Type]*Type
+}
+func NewGenerator() *Generator{
+	return &Generator{
+		Defs:make(map[reflect.Type]*Type),
+	}
+}
+func (c *Generator) Gen(t reflect.Type) *Type {
+	return  genSchema(t, c.Defs, nil, nil)
+}
+func (c *Generator) Definitions(excludeType reflect.Type) Definitions{
+	schemaDefs := make(Definitions, len(c.Defs))
+	for t, v := range c.Defs {
+		if t == excludeType || v.URI == "" {
+			continue
+		}
+		schemaDefs[v.URI] = v
+	}
+	return schemaDefs
+}
+func (c *Generator) FinishSchema(rootType reflect.Type) *Schema{
+	root := c.Defs[rootType]
+	if root == nil {
+		panic(fmt.Errorf("root type %v not found",rootType))
+	}
+	return &Schema{
+		Type:        root,
+		Definitions: c.Definitions(rootType),
+	}
+}
+
 func GenSchema(t reflect.Type) *Schema {
 	defs := make(map[reflect.Type]*Type)
 	root := genSchema(t, defs, nil, nil)
@@ -116,11 +148,13 @@ func GenSchemaList(t reflect.Type) SchemaList {
 type GenSchemaOptions struct {
 }
 
+const uriPrefix = "go:///"
+// genURI for numeric URI, must start with "/"
 func genURI(t reflect.Type, defs map[reflect.Type]*Type) string {
 	if t.PkgPath() != "" && t.Name() != "" {
-		return t.PkgPath() + "." + t.Name()
+		return uriPrefix + t.PkgPath() + "." + t.Name()
 	}
-	return fmt.Sprintf("%d", len(defs))
+	return fmt.Sprintf("%s%d",uriPrefix, len(defs))
 }
 
 func RefOrUse(t *Type) *Type {

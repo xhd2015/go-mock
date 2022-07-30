@@ -19,7 +19,10 @@ type FieldList interface {
 
 type TypeInfo interface {
 	Name() string
-	Type() reflect.Type
+	Type() TypeDesc
+}
+type TypeDesc interface {
+	Reflect() reflect.Type
 }
 
 type funcImpl struct {
@@ -27,9 +30,7 @@ type funcImpl struct {
 	Xresults FieldList `json:"Results"`
 }
 
-type fieldListImpl struct {
-	Types []TypeInfo `json:"Types"`
-}
+type fieldListImpl []TypeInfo
 
 type typeImpl struct {
 	Xname string       `json:"Name"`
@@ -37,12 +38,13 @@ type typeImpl struct {
 }
 
 type reflectType struct {
-	reflect.Type
+	Type reflect.Type
 }
 
 var _ Func = ((*funcImpl)(nil))
 var _ FieldList = ((*fieldListImpl)(nil))
 var _ TypeInfo = ((*typeImpl)(nil))
+var _ TypeDesc = ((*reflectType)(nil))
 var _ json.Marshaler = ((*reflectType)(nil))
 
 func NewTypeInfo(name string, rtype reflect.Type) TypeInfo {
@@ -55,12 +57,8 @@ func NewTypeInfo(name string, rtype reflect.Type) TypeInfo {
 }
 func NewFunc(args []TypeInfo, results []TypeInfo) Func {
 	return &funcImpl{
-		Xargs: &fieldListImpl{
-			Types: args,
-		},
-		Xresults: &fieldListImpl{
-			Types: results,
-		},
+		Xargs:    fieldListImpl(args),
+		Xresults: fieldListImpl(results),
 	}
 }
 func (c *funcImpl) Args() FieldList {
@@ -69,18 +67,21 @@ func (c *funcImpl) Args() FieldList {
 func (c *funcImpl) Results() FieldList {
 	return c.Xresults
 }
-func (c *fieldListImpl) Len() int {
-	return len(c.Types)
+func (c fieldListImpl) Len() int {
+	return len(c)
 }
-func (c *fieldListImpl) Get(i int) TypeInfo {
-	return c.Types[i]
+func (c fieldListImpl) Get(i int) TypeInfo {
+	return c[i]
 }
 
 func (c *typeImpl) Name() string {
 	return c.Xname
 }
-func (c *typeImpl) Type() reflect.Type {
+func (c *typeImpl) Type() TypeDesc {
 	return c.Xtype
+}
+func (c *reflectType) Reflect() reflect.Type {
+	return c.Type
 }
 
 func (c *reflectType) MarshalJSON() ([]byte, error) {
