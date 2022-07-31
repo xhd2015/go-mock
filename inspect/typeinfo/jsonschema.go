@@ -81,18 +81,19 @@ type Type struct {
 	Extras map[string]interface{} `json:"-"`
 }
 
-type Generator struct{
+type Generator struct {
 	Defs map[reflect.Type]*Type
 }
-func NewGenerator() *Generator{
+
+func NewGenerator() *Generator {
 	return &Generator{
-		Defs:make(map[reflect.Type]*Type),
+		Defs: make(map[reflect.Type]*Type),
 	}
 }
 func (c *Generator) Gen(t reflect.Type) *Type {
-	return  genSchema(t, c.Defs, nil, nil)
+	return genSchema(t, c.Defs, nil, nil)
 }
-func (c *Generator) Definitions(excludeType reflect.Type) Definitions{
+func (c *Generator) Definitions(excludeType reflect.Type) Definitions {
 	schemaDefs := make(Definitions, len(c.Defs))
 	for t, v := range c.Defs {
 		if t == excludeType || v.URI == "" {
@@ -102,10 +103,10 @@ func (c *Generator) Definitions(excludeType reflect.Type) Definitions{
 	}
 	return schemaDefs
 }
-func (c *Generator) FinishSchema(rootType reflect.Type) *Schema{
+func (c *Generator) FinishSchema(rootType reflect.Type) *Schema {
 	root := c.Defs[rootType]
 	if root == nil {
-		panic(fmt.Errorf("root type %v not found",rootType))
+		panic(fmt.Errorf("root type %v not found", rootType))
 	}
 	return &Schema{
 		Type:        root,
@@ -133,7 +134,7 @@ func GenSchemaList(t reflect.Type) SchemaList {
 	defs := make(map[reflect.Type]*Type)
 	root := genSchema(t, defs, nil, nil)
 
-	list := make(SchemaList,0,len(defs))
+	list := make(SchemaList, 0, len(defs))
 	list = append(list, root)
 
 	for _, v := range defs {
@@ -149,12 +150,13 @@ type GenSchemaOptions struct {
 }
 
 const uriPrefix = "go:///"
+
 // genURI for numeric URI, must start with "/"
 func genURI(t reflect.Type, defs map[reflect.Type]*Type) string {
 	if t.PkgPath() != "" && t.Name() != "" {
 		return uriPrefix + t.PkgPath() + "." + t.Name()
 	}
-	return fmt.Sprintf("%s%d",uriPrefix, len(defs))
+	return fmt.Sprintf("%s%d", uriPrefix, len(defs))
 }
 
 func RefOrUse(t *Type) *Type {
@@ -191,6 +193,12 @@ func genSchema(t reflect.Type, defs map[reflect.Type]*Type, path []string, opts 
 		}
 	case reflect.Ptr:
 		return genSchema(t.Elem(), defs, append(path, "&"), opts)
+	case reflect.Uintptr, reflect.UnsafePointer:
+		// generic pointer, don't know how to handle
+		return &Type{}
+	case reflect.Complex64, reflect.Complex128:
+		// generic pointer, don't know how to handle
+		return &Type{}
 	}
 
 	s = defs[t]
@@ -275,7 +283,7 @@ func genSchema(t reflect.Type, defs map[reflect.Type]*Type, path []string, opts 
 	case reflect.Func:
 		// ignore
 	default:
-		panic(fmt.Errorf("genSchema unhandled type:%v", t))
+		panic(fmt.Errorf("genSchema unhandled type:type=%v, kind=%v", t, kind))
 	}
 	return s
 }
