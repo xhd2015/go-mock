@@ -213,6 +213,12 @@ func rewriteFile(pkg *packages.Package, pkgPath string, fset *token.FileSet, f *
 			}
 			funcName := n.Name.Name
 
+			// cannot mock functions with type params now
+			// TODO add support for generic functions
+			if n.Type.TypeParams != nil {
+				return true
+			}
+
 			// package level init function cannot be mocked
 			// because go allows init be defined multiple times in a file,and across files
 			if ownerType == "" && funcName == "init" {
