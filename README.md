@@ -1,3 +1,10 @@
+# Announcing `xgo`
+Gophers, as `xgo` has been released, this repository is considered **End of Life**.
+
+As a redesign of `go-mock`, `xgo` provides seemingless integration with go, less build time and richer abilities.
+
+Go to [https://github.com/xhd2015/xgo](https://github.com/xhd2015/xgo) to check for more details!
+
 # Introduction
 A compile-time mock framework or library, it can be used in place where mock is needed, just like you would otherwise use other monkey-patch or interface-mock libraries.
 
